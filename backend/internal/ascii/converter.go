@@ -19,6 +19,7 @@ type Converter struct {
 
 type Options struct {
 	TargetWidth int
+	TargetHeight int
 	Mode string
 }
 
@@ -33,10 +34,22 @@ func (c *Converter) Convert(img image.Image) string {
 	bounds := img.Bounds()
 	widthIn := bounds.Dx()
 	heightIn := bounds.Dy()
-	targetHeight := int(float64(c.Options.TargetWidth) * float64(heightIn) / float64(widthIn) * 0.55)
-	if targetHeight == 0 && heightIn > 0 {
-		targetHeight = 1
+
+	var targetWidth, targetHeight int
+
+	if c.Options.TargetWidth > 0 && c.Options.TargetHeight > 0 {
+		targetWidth = c.Options.TargetWidth
+		targetHeight = c.Options.TargetHeight
+	} else if c.Options.TargetHeight > 0 {
+		targetHeight = c.Options.TargetHeight
+		targetWidth = int(float64(targetHeight) * (float64(widthIn) / float64(heightIn)) / 0.55)
+	} else {
+		targetWidth = c.Options.TargetWidth
+		if targetWidth == 0 { targetWidth = 100 }
+		targetHeight = int(float64(targetWidth) * (float64(heightIn) / float64(widthIn)) / 0.55)
 	}
+	if targetHeight == 0 && heightIn > 0 { targetHeight = 1	}
+	if targetWidth == 0 && widthIn > 0 { targetWidth = 1 }
 
 	var builder strings.Builder
 

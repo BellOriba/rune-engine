@@ -43,6 +43,8 @@ func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
 
 	widthStr := c.DefaultQuery("width", "180")
 	width, _ := strconv.Atoi(widthStr)
+	heightStr := c.DefaultQuery("height", "0")
+	height, _ := strconv.Atoi(heightStr)
 	mode := c.DefaultQuery("mode", "plain")
 
 	resultChan := make(chan string, 1)
@@ -50,6 +52,7 @@ func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
 	h.Pool.Submit(func() {
 		conv := ascii.NewConverter(ascii.Options{
 			TargetWidth: width,
+			TargetHeight: height,
 			Mode: mode,
 		})
 		resultChan <- conv.Convert(img)
@@ -87,6 +90,8 @@ func (h *ASCIIHandler) StreamGIF(c *gin.Context) {
 
 	widthStr := c.DefaultQuery("width", "180")
 	width, _ := strconv.Atoi(widthStr)
+	heightStr := c.DefaultQuery("height", "0")
+	height, _ := strconv.Atoi(heightStr)
 	mode := c.DefaultQuery("mode", "plain")
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -102,6 +107,7 @@ func (h *ASCIIHandler) StreamGIF(c *gin.Context) {
 
 	conv := ascii.NewConverter(ascii.Options{
 		TargetWidth: width,
+		TargetHeight: height,
 		Mode: mode,
 	})
 
