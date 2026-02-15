@@ -1,12 +1,19 @@
 package handlers
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"image"
 	"image/gif"
+	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/BellOriba/rune-engine/internal/ascii"
+	"github.com/BellOriba/rune-engine/internal/cache"
 	"github.com/BellOriba/rune-engine/internal/logger"
 	"github.com/BellOriba/rune-engine/internal/worker"
 	"github.com/gin-gonic/gin"
@@ -14,6 +21,12 @@ import (
 
 type ASCIIHandler struct {
 	Pool *worker.Pool
+	Cache *cache.Cache
+}
+
+func generateCacheKey(fileContent []byte, width, height int, mode string) string {
+	hash := sha256.Sum256(fileContent)
+	return hex.EncodeToString(hash[:]) + ":" + strconv.Itoa(width) + ":" + strconv.Itoa(height) + ":" + mode
 }
 
 func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
@@ -34,6 +47,17 @@ func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
 	}
 	defer src.Close()
 
+	fileBytes, err := io.ReadAll(src)
+	if err != nil {
+		log.Error("falha ao ler bytes da imagem", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error interno"})
+		return
+	}
+
+	if _, err := src.Seek(0, 0); err != nil {
+		log.Error("falha ao resetar ponteiro do arquivo", "error", err)
+	}
+
 	img, _, err := ascii.Decode(src)
 	if err != nil {
 		log.Error("falha ao decodificar imagem", "error", err)
@@ -47,6 +71,14 @@ func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
 	height, _ := strconv.Atoi(heightStr)
 	mode := c.DefaultQuery("mode", "plain")
 
+	cacheKey := generateCacheKey(fileBytes, width, height, mode)
+
+	if cached, err := h.Cache.Get(c.Request.Context(), cacheKey); err == nil {
+		c.Header("X-Cache", "HIT")
+		c.String(http.StatusOK, cached)
+		return
+	}
+
 	resultChan := make(chan string, 1)
 
 	h.Pool.Submit(func() {
@@ -55,7 +87,9 @@ func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
 			TargetHeight: height,
 			Mode: mode,
 		})
-		resultChan <- conv.Convert(img)
+		result := conv.Convert(img)
+		h.Cache.Set(context.Background(), cacheKey, result, 24*time.Hour)
+		resultChan <- result
 	})
 
 	select {
@@ -63,9 +97,43 @@ func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
 		c.String(http.StatusOK, result)
 	case <-time.After(10 * time.Second):
 		log.Warn("timeout no processamento da imagem")
-		c.JSON(http.StatusRequestTimeout, gin.H{"error": "servidor ocupado, tente novamente"})
-	
+		c.JSON(http.StatusRequestTimeout, gin.H{"error": "servidor ocupado, tente novamente"})	
 	}
+}
+
+func (h *ASCIIHandler) processFrameWithCache(ctx context.Context, frame image.Image, opts ascii.Options, log *slog.Logger) string {
+	var pix []byte
+	switch img := frame.(type) {
+	case *image.RGBA:
+		pix = img.Pix
+	case *image.Paletted:
+		pix = img.Pix
+	default:
+		return ascii.NewConverter(opts).Convert(frame)
+	}
+
+	hash := sha256.Sum256(pix)
+	cacheKey := hex.EncodeToString(hash[:]) + ":" + strconv.Itoa(opts.TargetWidth) + ":" + strconv.Itoa(opts.TargetHeight) + ":" + opts.Mode
+
+	if h.Cache != nil {
+		if cached, err := h.Cache.Get(ctx, cacheKey); err == nil {
+			return cached
+		}
+	}
+
+	conv := ascii.NewConverter(opts)
+	result := conv.Convert(frame)
+
+	if h.Cache != nil {
+		go func() {
+			err := h.Cache.Set(context.Background(), cacheKey, result, 24*time.Hour)
+			if err != nil {
+				log.Debug("falha ao salvar frame no cache", "error", err)
+			}
+		}()
+	}
+
+	return result
 }
 
 func (h *ASCIIHandler) StreamGIF(c *gin.Context) {
@@ -105,18 +173,21 @@ func (h *ASCIIHandler) StreamGIF(c *gin.Context) {
 		frameChans[i] = make(chan string, 1)
 	}
 
-	conv := ascii.NewConverter(ascii.Options{
+	opts := ascii.Options{
 		TargetWidth: width,
 		TargetHeight: height,
 		Mode: mode,
-	})
+	}
 
 	log.Info("iniciando streaming de GIF", "frames", len(g.Image), "width", width)
 
 	for i := range g.Image {
-		h.Pool.Submit(func () {
-			asciiFrame := conv.Convert(g.Image[i])
-			frameChans[i] <- asciiFrame
+		frameIndex := i
+		frameImg := g.Image[frameIndex]
+
+		h.Pool.Submit(func() {
+			asciiFrame := h.processFrameWithCache(c.Request.Context(), frameImg, opts, log)
+			frameChans[frameIndex] <- asciiFrame
 		})
 	}
 

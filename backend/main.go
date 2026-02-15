@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/BellOriba/rune-engine/internal/cache"
 	"github.com/BellOriba/rune-engine/internal/handlers"
 	"github.com/BellOriba/rune-engine/internal/logger"
 	"github.com/BellOriba/rune-engine/internal/worker"
@@ -38,7 +39,8 @@ func main() {
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "X-Cache, Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Expose-Headers", "X-Cache, X-Request-ID")
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if c.Request.Method == "OPTIONS" {
@@ -51,7 +53,7 @@ func main() {
 	r.Use(gin.Recovery())
 	r.Use(logger.Middleware(log))
 
-	setupRoutes(r, pool)
+	setupRoutes(r, pool, log)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -92,8 +94,16 @@ func main() {
 	log.Info("server exited cleanly")
 }
 
-func setupRoutes(r *gin.Engine, pool *worker.Pool) {
-	h := &handlers.ASCIIHandler{Pool: pool}
+func setupRoutes(r *gin.Engine, pool *worker.Pool, log *slog.Logger) {
+	rdb, err := cache.NewCache()
+	if err != nil {
+		log.Warn("Redis não disponível, operando sem cache", "error", err)
+	}
+
+	h := &handlers.ASCIIHandler{
+		Pool: pool,
+		Cache: rdb,
+	}
 
 	v1 := r.Group("/v1")
 	{
