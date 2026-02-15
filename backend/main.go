@@ -106,6 +106,7 @@ func setupRoutes(r *gin.Engine, pool *worker.Pool, log *slog.Logger) {
 	}
 
 	v1 := r.Group("/v1")
+	v1.Use(RateLimitMiddleware(rdb, log))
 	{
 		v1.GET("/health", handleHealth)
 		v1.POST("/convert", h.ConvertImage)
@@ -119,3 +120,32 @@ func handleHealth(c *gin.Context) {
 		"timestamp": time.Now().Unix(),
 	})
 }
+
+func RateLimitMiddleware(rdb *cache.Cache, log *slog.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if rdb == nil {
+			c.Next()
+			return
+		}
+
+		key := "ratelimit:" + c.ClientIP()
+		ctx := c.Request.Context()
+
+		count, err := rdb.Increment(ctx, key, time.Minute)
+		if err != nil {
+			c.Next()
+			return
+		}
+
+		if count > 10 {
+			c.Writer.Header().Set("Retry-After", "60")
+			log.Warn("rate limit excedido", "ip", c.ClientIP())
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "limite de requisições excedido (10/min)",})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+

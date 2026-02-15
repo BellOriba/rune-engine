@@ -26,7 +26,7 @@ type ASCIIHandler struct {
 
 func generateCacheKey(fileContent []byte, width, height int, mode string) string {
 	hash := sha256.Sum256(fileContent)
-	return hex.EncodeToString(hash[:]) + ":" + strconv.Itoa(width) + ":" + strconv.Itoa(height) + ":" + mode
+	return "img:" + hex.EncodeToString(hash[:]) + ":" + strconv.Itoa(width) + ":" + strconv.Itoa(height) + ":" + mode
 }
 
 func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
@@ -81,20 +81,33 @@ func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
 
 	resultChan := make(chan string, 1)
 
+	ctx := c.Request.Context()
+
 	h.Pool.Submit(func() {
-		conv := ascii.NewConverter(ascii.Options{
-			TargetWidth: width,
-			TargetHeight: height,
-			Mode: mode,
-		})
-		result := conv.Convert(img)
-		h.Cache.Set(context.Background(), cacheKey, result, 24*time.Hour)
-		resultChan <- result
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			conv := ascii.NewConverter(ascii.Options{
+				TargetWidth: width,
+				TargetHeight: height,
+				Mode: mode,
+			})
+			result := conv.Convert(img)
+			h.Cache.Set(context.Background(), cacheKey, result, 24*time.Hour)
+
+			select {
+			case resultChan <- result:
+			case <-ctx.Done():
+			}
+		}
 	})
 
 	select {
 	case result := <- resultChan:
 		c.String(http.StatusOK, result)
+	case <-ctx.Done():
+		log.Warn("cliente desconectou, cancelando resposta")
 	case <-time.After(10 * time.Second):
 		log.Warn("timeout no processamento da imagem")
 		c.JSON(http.StatusRequestTimeout, gin.H{"error": "servidor ocupado, tente novamente"})	
@@ -191,14 +204,19 @@ func (h *ASCIIHandler) StreamGIF(c *gin.Context) {
 		})
 	}
 
-	for i := range totalFrames {	
-		asciiFrame := <-frameChans[i]
-		c.Writer.Write([]byte("data: \033[H"))
-		c.Writer.Write([]byte(asciiFrame))
-		c.Writer.Write([]byte("\n\n"))
-		c.Writer.Flush()
+	for i := range totalFrames {
+		select {
+		case <-c.Request.Context().Done():
+			log.Warn("cliente desconectou, interrompendo streaming de GIF")
+			return
+		case asciiFrame := <-frameChans[i]:
+			c.Writer.Write([]byte("data: \033[H"))
+			c.Writer.Write([]byte(asciiFrame))
+			c.Writer.Write([]byte("\n\n"))
+			c.Writer.Flush()
 
-		time.Sleep(time.Duration(g.Delay[i]) * 10 * time.Millisecond)
+			time.Sleep(time.Duration(g.Delay[i]) * 10 * time.Millisecond)
+		}
 	}
 	log.Info("streaming de GIF finalizado com sucesso")
 }

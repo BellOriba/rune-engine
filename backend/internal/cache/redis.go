@@ -44,3 +44,11 @@ func (c *Cache) Set(ctx context.Context, key string, value string, ttl time.Dura
 	return c.Client.Set(ctx, key, value, ttl).Err()
 }
 
+func (c *Cache) Increment(ctx context.Context, key string, ttl time.Duration) (int64, error) {
+	pipe := c.Client.Pipeline()
+	incr := pipe.Incr(ctx, key)
+	pipe.Expire(ctx, key, ttl)
+	_, err := pipe.Exec(ctx)
+	return incr.Val(), err
+}
+
