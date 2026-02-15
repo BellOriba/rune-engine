@@ -101,7 +101,7 @@ func setupRoutes(r *gin.Engine, pool *worker.Pool, log *slog.Logger) {
 	}
 
 	h := &handlers.ASCIIHandler{
-		Pool: pool,
+		Pool:  pool,
 		Cache: rdb,
 	}
 
@@ -140,7 +140,7 @@ func RateLimitMiddleware(rdb *cache.Cache, log *slog.Logger) gin.HandlerFunc {
 		if count > 10 {
 			c.Writer.Header().Set("Retry-After", "60")
 			log.Warn("rate limit excedido", "ip", c.ClientIP())
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "limite de requisições excedido (10/min)",})
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "limite de requisições excedido (10/min)"})
 			c.Abort()
 			return
 		}
@@ -148,4 +148,3 @@ func RateLimitMiddleware(rdb *cache.Cache, log *slog.Logger) gin.HandlerFunc {
 		c.Next()
 	}
 }
-

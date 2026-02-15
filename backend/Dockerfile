@@ -6,6 +6,7 @@ COPY . .
 RUN go build -o main .
 
 FROM alpine:latest
+RUN apk add --no-cache curl
 WORKDIR /root/
 COPY --from=builder /app/main .
 COPY --from=builder /app/.env .

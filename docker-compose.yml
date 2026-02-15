@@ -30,6 +30,11 @@ services:
       - redis
     networks:
       - rune-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   frontend:
     build: ./frontend
@@ -39,6 +44,12 @@ services:
       - PORT=3000
     networks:
       - rune-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/ || exit 1"] 
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 networks:
   rune-net:
