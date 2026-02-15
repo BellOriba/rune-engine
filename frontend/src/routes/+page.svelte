@@ -4,6 +4,7 @@
     let terminal;
     let zoomLevel = 1.0;
     let width = 180;
+    let height = 0;
     let isStreaming = false;
 
     async function handleUpload() {
@@ -20,7 +21,7 @@
         const endpoint = isGif ? 'stream' : 'convert';
 
         try {
-            const response = await fetch(`http://localhost:8080/v1/${endpoint}?width=${width}&mode=ansi`, {
+            const response = await fetch(`http://localhost:8080/v1/${endpoint}?width=${width}&height=${height}&mode=ansi`, {
                 method: 'POST',
                 body: formData,
             });
@@ -59,6 +60,11 @@
             <div class="input-group">
                 <label for="w">Width:</label>
                 <input type="number" id="w" bind:value={width} />
+            </div>
+
+            <div class="input-group">
+                <label for="h">Height:</label>
+                <input type="number" id="h" bind:value={height} placeholder="Auto" />
             </div>
             
             <div class="input-group">
