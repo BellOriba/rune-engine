@@ -86,6 +86,7 @@ func setupRoutes(r *gin.Engine, pool *worker.Pool) {
 	{
 		v1.GET("/health", handleHealth)
 		v1.POST("/convert", h.ConvertImage)
+		v1.POST("/stream", h.StreamGIF)
 	}
 }
 

@@ -1,16 +1,17 @@
 package ascii
 
 import (
-	"io"
 	"image"
 	"image/color"
-	_ "image/gif"
+	"image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
+	"strconv"
 	"strings"
 )
 
-const charSet = " .:-=+*#%@"
+const charSet = ".:-=+*>#%@"
 
 type Converter struct {
 	Options Options
@@ -38,21 +39,29 @@ func (c *Converter) Convert(img image.Image) string {
 	}
 
 	var builder strings.Builder
-	builder.Grow((c.Options.TargetWidth + 1) * targetHeight)
+
+	if c.Options.Mode == "ansi" {
+		builder.Grow((c.Options.TargetWidth * 25) * targetHeight)
+	} else {
+		builder.Grow((c.Options.TargetWidth + 1) * targetHeight)
+	}
 
 	if pImg, ok := img.(*image.Paletted); ok {
 		lut := make([]string, len(pImg.Palette))
 		for i, col := range pImg.Palette {
-			lut[i] = c.pixelToChar(col)
+			char, r, g, b := c.pixelToChar(col)
+			if c.Options.Mode == "ansi" {
+				lut[i] = c.formatANSI(char, r, g, b)
+			} else {
+				lut[i] = string(char)
+			}
 		}
 
 		for y := range targetHeight {
 			srcY := y * heightIn / targetHeight
 			for x := range c.Options.TargetWidth {
 				srcX := x * widthIn / c.Options.TargetWidth
-
-				colorIndex := pImg.ColorIndexAt(srcX, srcY)
-				builder.WriteString(lut[colorIndex])
+				builder.WriteString(lut[pImg.ColorIndexAt(srcX, srcY)])
 			}
 			builder.WriteByte('\n')
 		}
@@ -63,25 +72,54 @@ func (c *Converter) Convert(img image.Image) string {
 		srcY := y * heightIn / targetHeight
 		for x := range c.Options.TargetWidth {
 			srcX := x * widthIn / c.Options.TargetWidth
+			char, r, g, b := c.pixelToChar(img.At(srcX, srcY))
 
-			p := img.At(srcX, srcY)
-			builder.WriteString(c.pixelToChar(p))
+			if c.Options.Mode == "ansi" {
+				builder.WriteString(c.formatANSI(char, r, g, b))
+			} else {
+				builder.WriteByte(char)
+			}
 		}
 		builder.WriteByte('\n')
 	}
 	return builder.String()
 }
 
-func (c *Converter) pixelToChar(p color.Color) string {
+func (c *Converter) pixelToChar(p color.Color) (byte, uint8, uint8, uint8) {
 	r, g, b, _ := p.RGBA()
+	r8, g8, b8 := uint8(r>>8), uint8(g>>8), uint8(b>>8)
 
-	lum := (r*19595 + g*38470 + b*7471) >> 16
+	lum := (uint32(r8)*19595 + uint32(g8)*38470 + uint32(b8)*7471) >> 16
 
-	index := int(lum) * (len(charSet) - 1) / 65535
-	return string(charSet[index])
+	index := int(lum) * (len(charSet) - 1) / 255
+	if index >= len(charSet) {
+		index = len(charSet) - 1
+	}
+
+	return charSet[index], r8, g8, b8 
 }
 
 func Decode(r io.Reader) (image.Image, string, error) {
 	return image.Decode(r)
 }
 
+func (c *Converter) formatANSI(char byte, r, g, b uint8) string {
+	var bld strings.Builder
+	bld.WriteString("\x1b[38;2;")
+	bld.Write(strconv.AppendUint(nil, uint64(r), 10))
+	bld.WriteByte(';')
+	bld.Write(strconv.AppendUint(nil, uint64(g), 10))
+	bld.WriteByte(';')
+	bld.Write(strconv.AppendUint(nil, uint64(b), 10))
+	bld.WriteByte('m')
+	bld.WriteByte(char)
+	bld.WriteString("\x1b[0m")
+	return bld.String()
+}
+
+func (c *Converter) ConvertGIF(g *gif.GIF, frames chan<- string) {
+	for _, frame := range g.Image {
+		frames <- c.Convert(frame)
+	}
+	close(frames)
+}

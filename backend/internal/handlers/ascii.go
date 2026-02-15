@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"image/gif"
 	"net/http"
 	"strconv"
 	"time"
@@ -35,12 +36,12 @@ func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
 
 	img, _, err := ascii.Decode(src)
 	if err != nil {
-		log.Error("falha ao descodificar imagem", "error", err)
+		log.Error("falha ao decodificar imagem", "error", err)
 		c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "formato de imagem não suportado"})
 		return
 	}
 
-	widthStr := c.DefaultQuery("width", "100")
+	widthStr := c.DefaultQuery("width", "180")
 	width, _ := strconv.Atoi(widthStr)
 	mode := c.DefaultQuery("mode", "plain")
 
@@ -62,5 +63,66 @@ func (h *ASCIIHandler) ConvertImage(c *gin.Context) {
 		c.JSON(http.StatusRequestTimeout, gin.H{"error": "servidor ocupado, tente novamente"})
 	
 	}
+}
+
+func (h *ASCIIHandler) StreamGIF(c *gin.Context) {
+	log := logger.FromContext(c)
+
+	file, err := c.FormFile("image")
+	if err != nil {
+		log.Error("falha ao receber GIF", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "imagem é obrigatória"})
+		return
+	}
+
+	f, _ := file.Open()
+	defer f.Close()
+
+	g, err := gif.DecodeAll(f)
+	if err != nil {
+		log.Error("falha ao decodificar GIF", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "falha ao decodificar GIF"})
+		return
+	}
+
+	widthStr := c.DefaultQuery("width", "180")
+	width, _ := strconv.Atoi(widthStr)
+	mode := c.DefaultQuery("mode", "plain")
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("Transfer-Encoding", "chunked")
+
+	totalFrames := len(g.Image)
+	frameChans := make([]chan string, totalFrames)
+	for i := range frameChans {
+		frameChans[i] = make(chan string, 1)
+	}
+
+	conv := ascii.NewConverter(ascii.Options{
+		TargetWidth: width,
+		Mode: mode,
+	})
+
+	log.Info("iniciando streaming de GIF", "frames", len(g.Image), "width", width)
+
+	for i := range g.Image {
+		h.Pool.Submit(func () {
+			asciiFrame := conv.Convert(g.Image[i])
+			frameChans[i] <- asciiFrame
+		})
+	}
+
+	for i := range totalFrames {	
+		asciiFrame := <-frameChans[i]
+		c.Writer.Write([]byte("data: \033[H"))
+		c.Writer.Write([]byte(asciiFrame))
+		c.Writer.Write([]byte("\n\n"))
+		c.Writer.Flush()
+
+		time.Sleep(time.Duration(g.Delay[i]) * 10 * time.Millisecond)
+	}
+	log.Info("streaming de GIF finalizado com sucesso")
 }
 
