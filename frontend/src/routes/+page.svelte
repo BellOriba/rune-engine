@@ -21,7 +21,7 @@
         const endpoint = isGif ? 'stream' : 'convert';
 
         try {
-            const response = await fetch(`http://localhost:8080/v1/${endpoint}?width=${width}&height=${height}&mode=ansi`, {
+            const response = await fetch(`/v1/${endpoint}?width=${width}&height=${height}&mode=ansi`, {
                 method: 'POST',
                 body: formData,
             });
